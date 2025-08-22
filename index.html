@@ -2,10 +2,10 @@
 <html lang="nl">
 <head>
   <meta charset="utf-8" />
-  <title>Visited Roads – MVP</title>
+  <title>Kaart</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <!-- Leaflet CSS -->
+  <!-- Leaflet CSS (belangrijk! zonder deze zie je “versnipperde” tiles) -->
   <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -14,34 +14,14 @@
   />
 
   <style>
-    html, body { height: 100%; margin: 0; padding: 0; }
-    #map { position: fixed; inset: 0; }
-    .legend {
-      position: fixed; top: 12px; left: 12px;
-      background: #fff; padding: .5rem .75rem; border-radius: .5rem;
-      box-shadow: 0 2px 8px rgba(0,0,0,.1);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      z-index: 1000; line-height: 1.25;
-    }
-    .legend small { color:#555; display:block; margin-top:.25rem; }
-    .btn {
-      display:inline-block; margin-left:.5rem; font-size:.9rem;
-      padding:.35rem .6rem; border:1px solid #ddd; border-radius:.4rem;
-      background:#f7f7f7; cursor:pointer;
-    }
-    /* Neutrale achtergrond zodat gaten minder opvallen tijdens laden */
-    .leaflet-container { background: #eef1f5; }
-    /* Voorkom dat styles/extensies tiles resizen */
-    .leaflet-container img { image-rendering:auto; max-width:none !important; }
+    /* Volledig scherm */
+    html, body, #map { height: 100%; margin: 0; }
+    /* Optioneel: prettige achtergrond als tiles nog laden */
+    .leaflet-container { background: #f2f2f2; }
   </style>
 </head>
 <body>
   <div id="map"></div>
-  <div class="legend">
-    <strong>Klik op de kaart</strong> — Selecteer dichtstbijzijnde weg (OSM).
-    <button id="resetBtn" class="btn" title="Wis alle gemarkeerde wegen">Reset</button>
-    <small>Basemap met per-tile fallback (OSM → OSM.de → CARTO) • Data © OpenStreetMap contributors (ODbL)</small>
-  </div>
 
   <!-- Leaflet JS -->
   <script
@@ -51,183 +31,14 @@
   </script>
 
   <script>
-  // ------------------ Kaart init (Noord-Nederland) ------------------
-  const map = L.map('map', { zoomAnimation: true, updateWhenIdle: true })
-               .setView([53.2, 6.6], 9);
+    // Startpositie (Groningen). Pas aan naar wens.
+    const map = L.map('map').setView([53.2194, 6.5665], 11);
 
-  // Providers in volgorde van voorkeur
-  const providers = [
-    { // officiële OSM
-      url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-      opts: { maxZoom: 19, detectRetina: false, attribution: '&copy; OpenStreetMap contributors' }
-    },
-    { // OSM.de (Duitse mirror)
-      url: 'https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png',
-      opts: { subdomains: 'abc', maxZoom: 19, detectRetina: false, attribution: '&copy; OpenStreetMap contributors' }
-    },
-    { // CARTO light
-      url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-      opts: { subdomains: 'abcd', maxZoom: 20, detectRetina: false,
-        attribution: 'Basemap &copy; CARTO &bull; Data &copy; OpenStreetMap contributors'
-      }
-    }
-  ];
-
-  // Eigen TileLayer met per-tile fallback
-  const FallbackTileLayer = L.TileLayer.extend({
-    initialize: function(url, options) {
-      L.TileLayer.prototype.initialize.call(this, url, options);
-      this._providerIndex = 0;
-      this._providers = providers;
-    },
-    createTile: function(coords, done) {
-      const tile = document.createElement('img');
-      L.DomEvent.on(tile, 'load', L.Util.bind(this._tileOnLoad, this, done, tile));
-      L.DomEvent.on(tile, 'error', L.Util.bind(this._tileOnError, this, done, tile, coords, 0));
-      tile.alt = '';
-      tile.setAttribute('role', 'presentation');
-      tile.src = this._tileURLFor(coords, 0); // start bij provider 0
-      return tile;
-    },
-    _tileURLFor: function(coords, providerIdx) {
-      const p = this._providers[providerIdx];
-      const data = {
-        r: L.Browser.retina && this.options.detectRetina ? '@2x' : '',
-        s: this._getSubdomain(coords),
-        x: coords.x, y: coords.y, z: coords.z
-      };
-      return L.Util.template(p.url, data);
-    },
-    _tileOnError: function(done, tile, coords, providerIdx) {
-      const next = providerIdx + 1;
-      if (next < this._providers.length) {
-        // Probeer volgende provider
-        tile.src = this._tileURLFor(coords, next);
-        L.DomEvent.off(tile, 'error'); // voorkom stapel events
-        L.DomEvent.on(tile, 'error', L.Util.bind(this._tileOnError, this, done, tile, coords, next));
-      } else {
-        // Geen providers meer; markeer als geladen (grijs vlak blijft, maar app blijft werken)
-        done();
-      }
-    }
-  });
-
-  const tiles = new FallbackTileLayer(providers[0].url, providers[0].opts);
-  tiles.addTo(map);
-
-  // ------------------ Weg-selectie & opslag ------------------
-  const selectedLayer = L.layerGroup().addTo(map);
-  const color = '#2ecc71';
-  const storageKey = 'visitedWays';
-
-  // Herteken opgeslagen wegen
-  (JSON.parse(localStorage.getItem(storageKey) || '[]')).forEach(f => {
-    L.geoJSON(f.geojson, { style:{ color, weight:4 } }).addTo(selectedLayer);
-  });
-
-  // Reset
-  document.getElementById('resetBtn').addEventListener('click', () => {
-    if (!confirm('Alle gemarkeerde wegen wissen?')) return;
-    localStorage.removeItem(storageKey);
-    selectedLayer.clearLayers();
-  });
-
-  // Helpers
-  function d2(aLat, aLon, bLat, bLon) {
-    const dLat = aLat - bLat, dLon = aLon - bLon;
-    return dLat*dLat + dLon*dLon;
-  }
-  function clickRadiusMeters() {
-    const z = map.getZoom();
-    if (z >= 16) return 25;
-    if (z >= 14) return 35;
-    if (z >= 12) return 50;
-    return 80;
-  }
-
-  // ------------------ Overpass (met retry op endpoints) ------------------
-  const overpassEndpoints = [
-    'https://overpass-api.de/api/interpreter',
-    'https://overpass.openstreetmap.ru/api/interpreter',
-    'https://overpass.kumi.systems/api/interpreter'
-  ];
-
-  async function overpassFetch(query) {
-    let lastErr;
-    for (const base of overpassEndpoints) {
-      try {
-        const url = base + '?data=' + encodeURIComponent(query);
-        const res = await fetch(url, { cache: 'no-store' });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        return await res.json();
-      } catch (e) {
-        lastErr = e;
-      }
-    }
-    throw lastErr || new Error('Overpass onbereikbaar');
-  }
-
-  async function fetchNearestWay(lat, lon) {
-    const radius = clickRadiusMeters();
-    const query = `
-      [out:json][timeout:25];
-      (
-        way(around:${radius},${lat},${lon})["highway"];
-      );
-      out geom;`;
-    const json = await overpassFetch(query);
-    if (!json.elements || json.elements.length === 0) return null;
-
-    const nearest = json.elements
-      .map(w => {
-        let best = Infinity;
-        for (const pt of w.geometry) {
-          const dist2 = d2(pt.lat, pt.lon, lat, lon);
-          if (dist2 < best) best = dist2;
-        }
-        return { way: w, d2: best };
-      })
-      .sort((a,b)=>a.d2-b.d2)[0];
-
-    return nearest.way;
-  }
-
-  // Klik → selecteer en kleur de weg
-  map.on('click', async (e) => {
-    try {
-      const way = await fetchNearestWay(e.latlng.lat, e.latlng.lng);
-      if (!way) {
-        alert('Geen weg gevonden in de buurt. Zoom wat verder in en klik opnieuw.');
-        return;
-      }
-      const coords = way.geometry.map(pt => [pt.lat, pt.lon]);
-      L.polyline(coords, { color, weight: 4 }).addTo(selectedLayer);
-
-      // Opslaan (dedupe op OSM way id)
-      const feature = {
-        osm_way_id: way.id,
-        geojson: {
-          type: "Feature",
-          geometry: {
-            type: "LineString",
-            coordinates: way.geometry.map(pt => [pt.lon, pt.lat])
-          },
-          properties: {
-            osm_way_id: way.id,
-            highway: (way.tags && way.tags.highway) || null
-          }
-        }
-      };
-      const list = JSON.parse(localStorage.getItem(storageKey) || '[]');
-      if (!list.some(x => x.osm_way_id === feature.osm_way_id)) {
-        list.push(feature);
-        localStorage.setItem(storageKey, JSON.stringify(list));
-      }
-    } catch (err) {
-      console.error(err);
-      alert('Ophalen mislukt. Probeer opnieuw (evt. iets inzoomen).');
-    }
-  });
+    // OpenStreetMap-tiles
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
   </script>
 </body>
 </html>
