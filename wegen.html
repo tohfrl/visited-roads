@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>OSM Wegen selecteren – NL (Leaflet + Overpass)</title>
+
+  <!-- Strakke CSP: alleen wat nodig is -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src https://*.tile.openstreetmap.org data:; script-src https://unpkg.com 'self'; style-src 'self' 'unsafe-inline'; connect-src https://overpass-api.de 'self'; object-src 'none'; base-uri 'self';">
+
+  <style>
+    /* ===== Eigen CSS (geen externe stylesheet) ===== */
+
+    /* Fullscreen map */
+    html, body { height: 100%; margin: 0; padding: 0; }
+    #map {
+      position: fixed; inset: 0;
+      width: 100vw; height: 100dvh; /* beter op mobiel dan 100vh */
+      background: #f2f2f2;
+    }
+
+    /* Leaflet minimal layout (uitgeklede, compatibele subset) + tile-fixes */
+    .leaflet-container img { max-width: none !important; height: auto !important; }
+    .leaflet-tile { width: 256px !important; height: 256px !important; }
+    #map, .leaflet-container { transform: none !important; zoom: 1 !important; filter: none !important; }
+
+    .leaflet-container { -ms-touch-action: pan-x pan-y; touch-action: pan-x pan-y; outline: 0; }
+    .leaflet-pane,
+    .leaflet-tile,
+    .leaflet-marker-icon,
+    .leaflet-marker-shadow,
+    .leaflet-tile-container,
+    .leaflet-pane > svg,
+    .leaflet-pane > canvas,
+    .leaflet-zoom-box,
+    .leaflet-image-layer,
+    .leaflet-layer { position: absolute; left: 0; top: 0; }
+    .leaflet-pane { z-index: 400; }
+    .leaflet-tile-pane { z-index: 200; }
+    .leaflet-overlay-pane { z-index: 400; }
+    .leaflet-shadow-pane { z-index: 500; }
+    .leaflet-marker-pane { z-index: 600; }
+    .leaflet-tooltip-pane { z-index: 650; }
+    .leaflet-popup-pane { z-index: 700; }
+    .leaflet-zoom-animated { transform-origin: 0 0; }
+
+    /* Controls – simpel en lichtgewicht */
+    .leaflet-control-container { position: absolute; inset: 0; pointer-events: none; }
+    .leaflet-top, .leaflet-bottom { position: absolute; z-index: 1000; pointer-events: none; }
+    .leaflet-top { top: 0; } .leaflet-bottom { bottom: 0; }
+    .leaflet-left { left: 0; } .leaflet-right { right: 0; }
+    .leaflet-control { pointer-events: auto; }
+
+    .leaflet-bar {
+      background: #fff; border-radius: 8px; overflow: hidden;
+      box-shadow: 0 1px 5px rgba(0,0,0,.35);
+    }
+    .leaflet-bar a {
+      display: block; width: 34px; height: 34px; line-height: 34px;
+      text-align: center; text-decoration: none; color: #111;
+      font: 18px/34px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      border-bottom: 1px solid #ddd; background: #fff;
+    }
+    .leaflet-bar a:last-child { border-bottom: 0; }
+    .leaflet-bar a:hover { background: #f6f6f6; }
+    .leaflet-control-zoom { margin: 10px; }
+
+    .leaflet-control-attribution {
+      margin: 0 6px 6px 6px; padding: 3px 8px;
+      background: rgba(255,255,255,.85); border-radius: 6px;
+      font: 12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color: #111;
+    }
+
+    /* Statusbalk linksonder */
+    .status {
+      margin: 0 6px 6px 6px; padding: 4px 8px;
+      background: rgba(255,255,255,.9); border-radius: 6px;
+      font: 12px/1.3 system-ui; color: #111;
+      box-shadow: 0 1px 4px rgba(0,0,0,.2);
+    }
+
+    /* Extra besturing rechtsboven */
+    .toolbox {
+      margin: 10px;
+    }
+
+    /* Cursor feedback */
+    .leaflet-grab { cursor: grab; cursor: -webkit-grab; }
+    .leaflet-dragging .leaflet-grab { cursor: grabbing; cursor: -webkit-grabbing; }
+
+    body { overscroll-behavior: none; }
+  </style>
+</head>
+<body>
+  <div id="map" aria-label="OpenStreetMap-kaart van Nederland"></div>
+
+  <!-- Leaflet JS (stabiel CDN). Wil je écht 0 externe JS? Kan ik inline leveren. -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+          crossorigin="anonymous"></script>
+
+  <script>
+    // ===================== Kaart basis =====================
+    const map = L.map('map', { zoomControl: true, attributionControl: true });
+    const nlBounds = L.latLngBounds([50.6, 3.1], [53.7, 7.3]);
+    map.fitBounds(nlBounds, { padding: [20, 20] });
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      subdomains: ['a','b','c'],
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    // ===================== UI Controls =====================
+    // Status (linksonder)
+    const Status = L.Control.extend({
+      onAdd: function() {
+        this._div = L.DomUtil.create('div', 'status');
+        this.setText('Zoom in om wegen te laden');
+        return this._div;
+      },
+      setText: function(txt) { this._div.innerHTML = txt; }
+    });
+    const status = new Status({ position: 'bottomleft' }).addTo(map);
+
+    // Toolbox (rechtsboven) - Clear selectie
+    const Toolbox = L.Control.extend({
+      onAdd: function() {
+        const c = L.DomUtil.create('div', 'leaflet-bar toolbox');
+        const btn = document.createElement('a');
+        btn.href = '#'; btn.title = 'Wis selectie'; btn.setAttribute('aria-label', 'Wis selectie');
+        btn.textContent = '⟲';
+        btn.onclick = (e) => {
+          e.preventDefault();
+          selectedIds.clear();
+          // her-stijl alle bestaande wegen:
+          roadLayer.eachLayer(layer => {
+            if (layer.feature) layer.setStyle(styleForFeature(layer.feature));
+          });
+          status.setText('Selectie gewist');
+        };
+        c.appendChild(btn);
+        return c;
+      }
+    });
+    new Toolbox({ position: 'topright' }).addTo(map);
+
+    // ===================== Wegenlaag (GeoJSON) =====================
+    const roadLayer = L.geoJSON(null, {
+      style: feature => styleForFeature(feature),
+      onEachFeature: (feature, layer) => {
+        const id = feature.properties.osm_id;
+        layer.on('click', () => {
+          // toggle selectie
+          if (selectedIds.has(id)) selectedIds.delete(id);
+          else selectedIds.add(id);
+          layer.setStyle(styleForFeature(feature));
+          layer.bringToFront();
+          const name = feature.properties.name || '(naam onbekend)';
+          status.setText(selectedIds.has(id) ? `Geselecteerd: ${name}` : `Gedeselecteerd: ${name}`);
+        });
+        // Voor toegankelijkheid: titel in tooltip op hover
+        const nm = feature.properties.name || 'weg';
+        layer.bindTooltip(nm, { sticky: true, opacity: 0.9 });
+      }
+    }).addTo(map);
+
+    // Bewaar selectie tussen reloads van features
+    const selectedIds = new Set();
+
+    function styleForFeature(feature) {
+      const sel = selectedIds.has(feature.properties.osm_id);
+      return {
+        color: sel ? '#05a357' : '#ff3b30',   // groen / rood
+        weight: sel ? 6 : 4,
+        opacity: sel ? 1.0 : 0.9,
+        lineCap: 'round',
+        lineJoin: 'round'
+      };
+    }
+
+    // ===================== Overpass fetch =====================
+    const MIN_ZOOM = 12;                       // pas bij inzoomen wegen halen
+    const FETCH_COOLDOWN_MS = 4000;            // beleefd voor Overpass
+    let lastFetchAt = 0;
+    let inflightAbort = null;
+    let lastBBoxKey = '';
+
+    function bboxKey(b) {
+      // rond coördinaten af om ruis te vermijden
+      const s = b.getSouth().toFixed(3);
+      const w = b.getWest().toFixed(3);
+      const n = b.getNorth().toFixed(3);
+      const e = b.getEast().toFixed(3);
+      return `${s},${w},${n},${e},z${map.getZoom()}`;
+    }
+
+    async function fetchRoadsForView() {
+      if (map.getZoom() < MIN_ZOOM) {
+        status.setText(`Zoom in (≥ ${MIN_ZOOM}) om wegen te laden`);
+        roadLayer.clearLayers();
+        return;
+      }
+
+      const now = Date.now();
+      if (now - lastFetchAt < FETCH_COOLDOWN_MS) return; // cooldown
+      lastFetchAt = now;
+
+      const b = map.getBounds();
+      const key = bboxKey(b);
+      if (key === lastBBoxKey) return;
+      lastBBoxKey = key;
+
+      const s = b.getSouth(), w = b.getWest(), n = b.getNorth(), e = b.getEast();
+
+      // Overpass QL: hoofdwegen + residential
+      const query = `
+[out:json][timeout:25];
+(
+  way
+    ["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential)$"]
+    (${s},${w},${n},${e});
+);
+out ids tags geom;
+      `.trim();
+
+      // event. vorige request annuleren
+      if (inflightAbort) inflightAbort.abort();
+      inflightAbort = new AbortController();
+
+      status.setText('Wegen laden…');
+
+      try {
+        const resp = await fetch('https://overpass-api.de/api/interpreter', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+          body: new URLSearchParams({ data: query }).toString(),
+          signal: inflightAbort.signal
+        });
+        if (!resp.ok) throw new Error('Overpass HTTP ' + resp.status);
+        const data = await resp.json();
+
+        // Convert naar GeoJSON
+        const features = [];
+        for (const el of (data.elements || [])) {
+          if (el.type !== 'way' || !el.geometry || el.geometry.length < 2) continue;
+          const coords = el.geometry.map(p => [p.lon, p.lat]);
+          const props = {
+            osm_id: el.id,
+            name: (el.tags && (el.tags.name || el.tags.ref)) || null,
+            highway: el.tags && el.tags.highway
+          };
+          features.push({
+            type: 'Feature',
+            properties: props,
+            geometry: { type: 'LineString', coordinates: coords }
+          });
+        }
+
+        // Herteken laag (selecties blijven behouden via selectedIds)
+        roadLayer.clearLayers();
+        roadLayer.addData({ type: 'FeatureCollection', features });
+
+        status.setText(`Wegen geladen: ${features.length.toLocaleString('nl-NL')}`);
+      } catch (err) {
+        if (err.name === 'AbortError') return; // genegeerd
+        console.error(err);
+        status.setText('Fout bij laden van wegen (Overpass). Probeer iets verder in/uit te zoomen.');
+      }
+    }
+
+    // Debounce helper
+    let moveTimer = null;
+    function scheduleFetch() {
+      if (moveTimer) clearTimeout(moveTimer);
+      moveTimer = setTimeout(fetchRoadsForView, 700);
+    }
+
+    map.on('moveend', scheduleFetch);
+    // eerste keer na initialisatie:
+    scheduleFetch();
+
+    // Hertekenen bij resize (veiligheid)
+    addEventListener('resize', () => map.invalidateSize({ debounceMoveend: true }));
+  </script>
+</body>
+</html>
