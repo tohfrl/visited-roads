@@ -23,19 +23,25 @@
       font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
       z-index: 1000; line-height: 1.25;
     }
-    .legend small { color:#555; }
-    /* neutrale achtergrond zodat je geen “gaten” ziet tijdens laden */
+    .legend small { color:#555; display:block; margin-top:.25rem; }
+    .btn {
+      display:inline-block; margin-top:.5rem; font-size:.9rem;
+      padding:.35rem .6rem; border:1px solid #ddd; border-radius:.4rem;
+      background:#f7f7f7; cursor:pointer;
+    }
+    /* Neutrale achtergrond zodat “gaten” minder opvallen tijdens laden */
     .leaflet-container { background: #eef1f5; }
-    /* Chrome-fix: zorg dat Leaflet images niet door CSS van extensies worden geschaald */
-    .leaflet-container img { image-rendering: auto; max-width: none !important; }
+    /* Voorkom dat extensies Leaflet-tiles resizen */
+    .leaflet-container img { image-rendering:auto; max-width:none !important; }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <div class="legend">
     <strong>Klik op de kaart</strong><br/>
-    Selecteer dichtstbijzijnde weg (OSM).<br/>
-    <small>Basemap © CARTO • Data © OpenStreetMap contributors (ODbL)</small>
+    Selecteer dichtstbijzijnde weg (OSM).
+    <button id="resetBtn" class="btn" title="Wis alle gemarkeerde wegen">Reset</button>
+    <small>Basemap: OSM → automatische fallback naar Esri • Data © OpenStreetMap contributors (ODbL)</small>
   </div>
 
   <!-- Leaflet JS -->
@@ -46,22 +52,40 @@
   </script>
 
   <script>
-  // --- Kaart init ---
-  // Start in Noord-Nederland
-  const map = L.map('map', {
-    zoomAnimation: true,
-    updateWhenIdle: true
-  }).setView([53.2, 6.6], 9);
+  // --- Kaart init: Noord-Nederland ---
+  const map = L.map('map', { zoomAnimation: true, updateWhenIdle: true })
+               .setView([53.2, 6.6], 9);
 
-  // STABIELE TEGELS (Carto light)
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-    subdomains: 'abcd',
-    maxZoom: 20,
-    detectRetina: true,
-    attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &bull; ' +
-      'Basemap &copy; <a href="https://carto.com/attributions">CARTO</a>'
-  }).addTo(map);
+  // --- Basemap 1: officiële OSM-tiles (stabiel) ---
+  const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    crossOrigin: true,
+    attribution: '&copy; OpenStreetMap contributors'
+  });
+
+  // --- Basemap 2: fallback (Esri Light Gray) ---
+  const esri = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    {
+      maxZoom: 19,
+      crossOrigin: true,
+      attribution:
+        'Basemap &copy; Esri &bull; Data &copy; OpenStreetMap contributors'
+    }
+  );
+
+  // Voeg OSM toe en tel tile-errors; bij te veel fouten → switch naar Esri
+  let errorCount = 0;
+  osm.on('tileerror', () => {
+    errorCount++;
+    // Als meerdere tegels falen binnen korte tijd, switchen we.
+    if (errorCount >= 6 && map.hasLayer(osm)) {
+      map.removeLayer(osm);
+      esri.addTo(map);
+      console.warn('Te veel tile errors: overgeschakeld naar Esri basemap.');
+    }
+  });
+  osm.addTo(map);
 
   const selectedLayer = L.layerGroup().addTo(map);
   const color = '#2ecc71';
@@ -72,11 +96,19 @@
     L.geoJSON(f.geojson, { style:{ color, weight:4 } }).addTo(selectedLayer);
   });
 
-  // Hulpfuncties
+  // Reset-knop
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    if (!confirm('Alle gemarkeerde wegen wissen?')) return;
+    localStorage.removeItem(storageKey);
+    selectedLayer.clearLayers();
+  });
+
+  // Helper: kwadratische afstand
   function d2(aLat, aLon, bLat, bLon) {
     const dLat = aLat - bLat, dLon = aLon - bLon;
     return dLat*dLat + dLon*dLon;
   }
+  // Buffer afhankelijk van zoom
   function clickRadiusMeters() {
     const z = map.getZoom();
     if (z >= 16) return 25;
@@ -85,7 +117,7 @@
     return 80;
   }
 
-  // Vraag dichtstbijzijnde OSM-way (highway) op
+  // Overpass: dichtstbijzijnde OSM-way (highway)
   async function fetchNearestWay(lat, lon) {
     const radius = clickRadiusMeters();
     const query = `
@@ -119,11 +151,11 @@
     try {
       const way = await fetchNearestWay(e.latlng.lat, e.latlng.lng);
       if (!way) {
-        alert('Geen weg gevonden in de buurt. Zoom iets verder in en klik opnieuw.');
+        alert('Geen weg gevonden in de buurt. Zoom wat verder in en klik opnieuw.');
         return;
       }
       const coords = way.geometry.map(pt => [pt.lat, pt.lon]);
-      L.polyline(coords, { color, weight:4 }).addTo(selectedLayer);
+      L.polyline(coords, { color, weight: 4 }).addTo(selectedLayer);
 
       // Opslaan (dedupe op OSM way id)
       const feature = {
@@ -131,12 +163,12 @@
         geojson: {
           type: "Feature",
           geometry: {
-            type:"LineString",
+            type: "LineString",
             coordinates: way.geometry.map(pt => [pt.lon, pt.lat])
           },
           properties: {
             osm_way_id: way.id,
-            highway: (way.tags && way.tags.highway) || null,
+            highway: (way.tags && way.tags.highway) || null
           }
         }
       };
@@ -147,7 +179,7 @@
       }
     } catch (err) {
       console.error(err);
-      alert('Er ging iets mis met ophalen. Probeer nog eens (eventueel iets inzoomen).');
+      alert('Ophalen mislukt. Probeer opnieuw (evt. iets inzoomen).');
     }
   });
   </script>
