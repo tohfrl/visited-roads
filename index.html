@@ -24,7 +24,10 @@
       z-index: 1000; line-height: 1.25;
     }
     .legend small { color:#555; }
+    /* neutrale achtergrond zodat je geen “gaten” ziet tijdens laden */
     .leaflet-container { background: #eef1f5; }
+    /* Chrome-fix: zorg dat Leaflet images niet door CSS van extensies worden geschaald */
+    .leaflet-container img { image-rendering: auto; max-width: none !important; }
   </style>
 </head>
 <body>
@@ -32,7 +35,7 @@
   <div class="legend">
     <strong>Klik op de kaart</strong><br/>
     Selecteer dichtstbijzijnde weg (OSM).<br/>
-    <small>Data: © OpenStreetMap contributors (ODbL)</small>
+    <small>Basemap © CARTO • Data © OpenStreetMap contributors (ODbL)</small>
   </div>
 
   <!-- Leaflet JS -->
@@ -44,22 +47,32 @@
 
   <script>
   // --- Kaart init ---
-  // Startlocatie ingesteld op Noord-Nederland (coördinaten rond Groningen)
-  const map = L.map('map').setView([53.2, 6.6], 9);
+  // Start in Noord-Nederland
+  const map = L.map('map', {
+    zoomAnimation: true,
+    updateWhenIdle: true
+  }).setView([53.2, 6.6], 9);
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '&copy; OpenStreetMap contributors'
+  // STABIELE TEGELS (Carto light)
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    subdomains: 'abcd',
+    maxZoom: 20,
+    detectRetina: true,
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &bull; ' +
+      'Basemap &copy; <a href="https://carto.com/attributions">CARTO</a>'
   }).addTo(map);
 
   const selectedLayer = L.layerGroup().addTo(map);
   const color = '#2ecc71';
   const storageKey = 'visitedWays';
 
+  // Herteken opgeslagen wegen
   (JSON.parse(localStorage.getItem(storageKey) || '[]')).forEach(f => {
     L.geoJSON(f.geojson, { style:{ color, weight:4 } }).addTo(selectedLayer);
   });
 
+  // Hulpfuncties
   function d2(aLat, aLon, bLat, bLon) {
     const dLat = aLat - bLat, dLon = aLon - bLon;
     return dLat*dLat + dLon*dLon;
@@ -72,6 +85,7 @@
     return 80;
   }
 
+  // Vraag dichtstbijzijnde OSM-way (highway) op
   async function fetchNearestWay(lat, lon) {
     const radius = clickRadiusMeters();
     const query = `
@@ -100,6 +114,7 @@
     return nearest.way;
   }
 
+  // Klik → selecteer en kleur de weg
   map.on('click', async (e) => {
     try {
       const way = await fetchNearestWay(e.latlng.lat, e.latlng.lng);
@@ -110,6 +125,7 @@
       const coords = way.geometry.map(pt => [pt.lat, pt.lon]);
       L.polyline(coords, { color, weight:4 }).addTo(selectedLayer);
 
+      // Opslaan (dedupe op OSM way id)
       const feature = {
         osm_way_id: way.id,
         geojson: {
@@ -134,7 +150,6 @@
       alert('Er ging iets mis met ophalen. Probeer nog eens (eventueel iets inzoomen).');
     }
   });
-
   </script>
 </body>
 </html>
