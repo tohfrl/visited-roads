@@ -1,11 +1,100 @@
 <!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>Visited Roads Test</title>
-  </head>
-  <body>
-    <h1>Hello from GitHub Pages 👋</h1>
-    <p>Als je dit ziet, werkt je site!</p>
-  </body>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <title>Visited Roads – MVP</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAO8g3GIIk3Hn2V7Y2qLZQkKXJME3i2R3qM4Lr3w="
+    crossorigin=""
+  />
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+    .legend { position:absolute; top:10px; left:10px; background:#fff; padding:.5rem .75rem; border-radius:.5rem; box-shadow:0 2px 8px rgba(0,0,0,.1); font-family:system-ui, sans-serif; }
+    .legend small { color:#555; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div class="legend">
+  <strong>Klik op de kaart</strong><br/>
+  Selecteer dichtstbijzijnde weg (OSM).<br/>
+  <small>Data: © OpenStreetMap contributors (ODbL)</small>
+</div>
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+  crossorigin="">
+</script>
+<script>
+const map = L.map('map').setView([52.3702, 4.8952], 12); // Start = Amsterdam
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+const selectedLayer = L.layerGroup().addTo(map);
+const stored = JSON.parse(localStorage.getItem('visitedWays') || '[]');
+const color = '#2ecc71'; // groen
+
+// Teken eerder opgeslagen ways
+stored.forEach(f => {
+  L.geoJSON(f.geojson, { style:{ color, weight:4 } }).addTo(selectedLayer);
+});
+
+async function fetchNearestWay(lat, lon) {
+  const query = `
+    [out:json][timeout:25];
+    (
+      way(around:30,${lat},${lon})["highway"];
+    );
+    out geom;`;
+  const url = 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Overpass fout: ' + res.status);
+  const json = await res.json();
+  if (!json.elements || json.elements.length === 0) return null;
+
+  // Pak de dichtstbijzijnde way
+  const withDist = json.elements.map(w => {
+    const first = w.geometry[0];
+    const d2 = (first.lat-lat)**2 + (first.lon-lon)**2;
+    return { way:w, d2 };
+  }).sort((a,b)=>a.d2-b.d2);
+
+  return withDist[0].way;
+}
+
+map.on('click', async (e) => {
+  try {
+    const way = await fetchNearestWay(e.latlng.lat, e.latlng.lng);
+    if (!way) {
+      alert('Geen weg gevonden binnen 30m.');
+      return;
+    }
+    const coords = way.geometry.map(pt => [pt.lat, pt.lon]);
+    L.polyline(coords, { color, weight:4 }).addTo(selectedLayer);
+
+    const feature = {
+      osm_way_id: way.id,
+      geojson: {
+        type: "Feature",
+        geometry: { type:"LineString", coordinates: way.geometry.map(pt => [pt.lon, pt.lat]) },
+        properties: { osm_way_id: way.id, highway: way.tags?.highway || null }
+      }
+    };
+    const list = JSON.parse(localStorage.getItem('visitedWays') || '[]');
+    if (!list.some(x => x.osm_way_id === feature.osm_way_id)) {
+      list.push(feature);
+      localStorage.setItem('visitedWays', JSON.stringify(list));
+    }
+  } catch (err) {
+    console.error(err);
+    alert('Er ging iets mis. Probeer nog eens.');
+  }
+});
+</script>
+</body>
 </html>
