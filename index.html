@@ -14,12 +14,21 @@
   />
 
   <style>
-    /* Volledig scherm, geen scrollbars */
+    /* Basis: fullscreen kaart */
     html, body { height: 100%; margin: 0; }
     #map { position: fixed; inset: 0; }
 
-    /* Zorg dat externe styles/transforms (mocht je later toevoegen) geen tiles verschuiven */
-    body { transform: none !important; }
+    /* BELANGRIJK: voorkom verschoven/geschaalde tiles door globale img-styles */
+    .leaflet-container img {
+      max-width: none !important;   /* neutraliseert bv. img { max-width:100% } */
+    }
+    .leaflet-tile {
+      width: 256px !important;
+      height: 256px !important;     /* borgt exacte tilesize in CSS */
+    }
+
+    /* Optional: nette achtergrondkleur tijdens laden */
+    .leaflet-container { background: #f2f2f2; }
   </style>
 </head>
 <body>
@@ -39,11 +48,8 @@
       attributionControl: true
     });
 
-    // Kader rond Nederland (globaal, werkt netjes voor een startview)
-    const nlBounds = L.latLngBounds(
-      [50.6, 3.1],  // zuidwest
-      [53.7, 7.3]   // noordoost
-    );
+    // Start op Nederland
+    const nlBounds = L.latLngBounds([50.6, 3.1], [53.7, 7.3]);
     map.fitBounds(nlBounds, { padding: [20, 20] });
 
     // OpenStreetMap tiles + correcte attribution
@@ -52,16 +58,14 @@
       maxZoom: 19,
       minZoom: 0,
       tileSize: 256,
+      detectRetina: false,
       updateWhenIdle: true,
-      // Gebruik geen detectRetina hier om onnodige tile-load te voorkomen.
       attribution:
         '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     }).addTo(map);
 
-    // Zorgt dat de kaart netjes hertekent bij resize/orientation-change
-    window.addEventListener('resize', () => {
-      map.invalidateSize({ debounceMoveend: true });
-    });
+    // Houd de kaart netjes bij resize/orientation-change
+    addEventListener('resize', () => map.invalidateSize({ debounceMoveend: true }));
   </script>
 </body>
 </html>
