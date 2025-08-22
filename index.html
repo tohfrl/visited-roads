@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OSM Fullscreen – Nederland (Leaflet)</title>
+  <title>OSM Fullscreen – Nederland</title>
 
-  <!-- Leaflet CSS (CDN) -->
+  <!-- Leaflet CSS -->
   <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -14,58 +14,15 @@
   />
 
   <style>
-    /* Basis: fullscreen kaart */
+    /* Fullscreen kaart, zonder scrollbars of marges */
     html, body { height: 100%; margin: 0; }
-    #map { position: fixed; inset: 0; }
+    #map { height: 100vh; width: 100vw; }
 
-    /* BELANGRIJK: voorkom verschoven/geschaalde tiles door globale img-styles */
-    .leaflet-container img {
-      max-width: none !important;   /* neutraliseert bv. img { max-width:100% } */
+    /* BELANGRIJK: neutraliseer globale img/transform regels van thema’s */
+    .leaflet-container img { max-width: none !important; }
+    .leaflet-container, #map {
+      transform: none !important;
+      zoom: 1 !important;          /* neutraliseert evt. CSS zoom */
+      filter: none !important;      /* voorkomt nieuwe stacking context */
     }
-    .leaflet-tile {
-      width: 256px !important;
-      height: 256px !important;     /* borgt exacte tilesize in CSS */
-    }
-
-    /* Optional: nette achtergrondkleur tijdens laden */
-    .leaflet-container { background: #f2f2f2; }
-  </style>
-</head>
-<body>
-  <div id="map" role="region" aria-label="OpenStreetMap-kaart van Nederland"></div>
-
-  <!-- Leaflet JS (CDN) -->
-  <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-    crossorigin="anonymous">
-  </script>
-
-  <script>
-    // Init de kaart
-    const map = L.map('map', {
-      zoomControl: true,
-      attributionControl: true
-    });
-
-    // Start op Nederland
-    const nlBounds = L.latLngBounds([50.6, 3.1], [53.7, 7.3]);
-    map.fitBounds(nlBounds, { padding: [20, 20] });
-
-    // OpenStreetMap tiles + correcte attribution
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      subdomains: ['a', 'b', 'c'],
-      maxZoom: 19,
-      minZoom: 0,
-      tileSize: 256,
-      detectRetina: false,
-      updateWhenIdle: true,
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-    }).addTo(map);
-
-    // Houd de kaart netjes bij resize/orientation-change
-    addEventListener('resize', () => map.invalidateSize({ debounceMoveend: true }));
-  </script>
-</body>
-</html>
+    .leaflet-tile { width: 256px !important; height: 2
