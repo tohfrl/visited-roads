@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OSM Fullscreen – Nederland (Leaflet)</title>
+
+  <!-- Leaflet CSS (CDN) -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/mC0uZfQjF2QbMwra8="
+    crossorigin="anonymous"
+  />
+
+  <style>
+    /* Volledig scherm, geen scrollbars */
+    html, body { height: 100%; margin: 0; }
+    #map { position: fixed; inset: 0; }
+
+    /* Zorg dat externe styles/transforms (mocht je later toevoegen) geen tiles verschuiven */
+    body { transform: none !important; }
+  </style>
+</head>
+<body>
+  <div id="map" role="region" aria-label="OpenStreetMap-kaart van Nederland"></div>
+
+  <!-- Leaflet JS (CDN) -->
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin="anonymous">
+  </script>
+
+  <script>
+    // Init de kaart
+    const map = L.map('map', {
+      zoomControl: true,
+      attributionControl: true
+    });
+
+    // Kader rond Nederland (globaal, werkt netjes voor een startview)
+    const nlBounds = L.latLngBounds(
+      [50.6, 3.1],  // zuidwest
+      [53.7, 7.3]   // noordoost
+    );
+    map.fitBounds(nlBounds, { padding: [20, 20] });
+
+    // OpenStreetMap tiles + correcte attribution
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      subdomains: ['a', 'b', 'c'],
+      maxZoom: 19,
+      minZoom: 0,
+      tileSize: 256,
+      updateWhenIdle: true,
+      // Gebruik geen detectRetina hier om onnodige tile-load te voorkomen.
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    // Zorgt dat de kaart netjes hertekent bij resize/orientation-change
+    window.addEventListener('resize', () => {
+      map.invalidateSize({ debounceMoveend: true });
+    });
+  </script>
+</body>
+</html>
