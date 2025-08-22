@@ -25,23 +25,22 @@
     }
     .legend small { color:#555; display:block; margin-top:.25rem; }
     .btn {
-      display:inline-block; margin-top:.5rem; font-size:.9rem;
+      display:inline-block; margin-left:.5rem; font-size:.9rem;
       padding:.35rem .6rem; border:1px solid #ddd; border-radius:.4rem;
       background:#f7f7f7; cursor:pointer;
     }
-    /* Neutrale achtergrond zodat “gaten” minder opvallen tijdens laden */
+    /* Neutrale achtergrond zodat gaten minder opvallen tijdens laden */
     .leaflet-container { background: #eef1f5; }
-    /* Voorkom dat extensies Leaflet-tiles resizen */
+    /* Voorkom dat styles/extensies tiles resizen */
     .leaflet-container img { image-rendering:auto; max-width:none !important; }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <div class="legend">
-    <strong>Klik op de kaart</strong><br/>
-    Selecteer dichtstbijzijnde weg (OSM).
+    <strong>Klik op de kaart</strong> — Selecteer dichtstbijzijnde weg (OSM).
     <button id="resetBtn" class="btn" title="Wis alle gemarkeerde wegen">Reset</button>
-    <small>Basemap: OSM → automatische fallback naar Esri • Data © OpenStreetMap contributors (ODbL)</small>
+    <small>Basemap met per-tile fallback (OSM → OSM.de → CARTO) • Data © OpenStreetMap contributors (ODbL)</small>
   </div>
 
   <!-- Leaflet JS -->
@@ -52,41 +51,71 @@
   </script>
 
   <script>
-  // --- Kaart init: Noord-Nederland ---
+  // ------------------ Kaart init (Noord-Nederland) ------------------
   const map = L.map('map', { zoomAnimation: true, updateWhenIdle: true })
                .setView([53.2, 6.6], 9);
 
-  // --- Basemap 1: officiële OSM-tiles (stabiel) ---
-  const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    crossOrigin: true,
-    attribution: '&copy; OpenStreetMap contributors'
+  // Providers in volgorde van voorkeur
+  const providers = [
+    { // officiële OSM
+      url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      opts: { maxZoom: 19, detectRetina: false, attribution: '&copy; OpenStreetMap contributors' }
+    },
+    { // OSM.de (Duitse mirror)
+      url: 'https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png',
+      opts: { subdomains: 'abc', maxZoom: 19, detectRetina: false, attribution: '&copy; OpenStreetMap contributors' }
+    },
+    { // CARTO light
+      url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+      opts: { subdomains: 'abcd', maxZoom: 20, detectRetina: false,
+        attribution: 'Basemap &copy; CARTO &bull; Data &copy; OpenStreetMap contributors'
+      }
+    }
+  ];
+
+  // Eigen TileLayer met per-tile fallback
+  const FallbackTileLayer = L.TileLayer.extend({
+    initialize: function(url, options) {
+      L.TileLayer.prototype.initialize.call(this, url, options);
+      this._providerIndex = 0;
+      this._providers = providers;
+    },
+    createTile: function(coords, done) {
+      const tile = document.createElement('img');
+      L.DomEvent.on(tile, 'load', L.Util.bind(this._tileOnLoad, this, done, tile));
+      L.DomEvent.on(tile, 'error', L.Util.bind(this._tileOnError, this, done, tile, coords, 0));
+      tile.alt = '';
+      tile.setAttribute('role', 'presentation');
+      tile.src = this._tileURLFor(coords, 0); // start bij provider 0
+      return tile;
+    },
+    _tileURLFor: function(coords, providerIdx) {
+      const p = this._providers[providerIdx];
+      const data = {
+        r: L.Browser.retina && this.options.detectRetina ? '@2x' : '',
+        s: this._getSubdomain(coords),
+        x: coords.x, y: coords.y, z: coords.z
+      };
+      return L.Util.template(p.url, data);
+    },
+    _tileOnError: function(done, tile, coords, providerIdx) {
+      const next = providerIdx + 1;
+      if (next < this._providers.length) {
+        // Probeer volgende provider
+        tile.src = this._tileURLFor(coords, next);
+        L.DomEvent.off(tile, 'error'); // voorkom stapel events
+        L.DomEvent.on(tile, 'error', L.Util.bind(this._tileOnError, this, done, tile, coords, next));
+      } else {
+        // Geen providers meer; markeer als geladen (grijs vlak blijft, maar app blijft werken)
+        done();
+      }
+    }
   });
 
-  // --- Basemap 2: fallback (Esri Light Gray) ---
-  const esri = L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
-    {
-      maxZoom: 19,
-      crossOrigin: true,
-      attribution:
-        'Basemap &copy; Esri &bull; Data &copy; OpenStreetMap contributors'
-    }
-  );
+  const tiles = new FallbackTileLayer(providers[0].url, providers[0].opts);
+  tiles.addTo(map);
 
-  // Voeg OSM toe en tel tile-errors; bij te veel fouten → switch naar Esri
-  let errorCount = 0;
-  osm.on('tileerror', () => {
-    errorCount++;
-    // Als meerdere tegels falen binnen korte tijd, switchen we.
-    if (errorCount >= 6 && map.hasLayer(osm)) {
-      map.removeLayer(osm);
-      esri.addTo(map);
-      console.warn('Te veel tile errors: overgeschakeld naar Esri basemap.');
-    }
-  });
-  osm.addTo(map);
-
+  // ------------------ Weg-selectie & opslag ------------------
   const selectedLayer = L.layerGroup().addTo(map);
   const color = '#2ecc71';
   const storageKey = 'visitedWays';
@@ -96,19 +125,18 @@
     L.geoJSON(f.geojson, { style:{ color, weight:4 } }).addTo(selectedLayer);
   });
 
-  // Reset-knop
+  // Reset
   document.getElementById('resetBtn').addEventListener('click', () => {
     if (!confirm('Alle gemarkeerde wegen wissen?')) return;
     localStorage.removeItem(storageKey);
     selectedLayer.clearLayers();
   });
 
-  // Helper: kwadratische afstand
+  // Helpers
   function d2(aLat, aLon, bLat, bLon) {
     const dLat = aLat - bLat, dLon = aLon - bLon;
     return dLat*dLat + dLon*dLon;
   }
-  // Buffer afhankelijk van zoom
   function clickRadiusMeters() {
     const z = map.getZoom();
     if (z >= 16) return 25;
@@ -117,7 +145,28 @@
     return 80;
   }
 
-  // Overpass: dichtstbijzijnde OSM-way (highway)
+  // ------------------ Overpass (met retry op endpoints) ------------------
+  const overpassEndpoints = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.openstreetmap.ru/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter'
+  ];
+
+  async function overpassFetch(query) {
+    let lastErr;
+    for (const base of overpassEndpoints) {
+      try {
+        const url = base + '?data=' + encodeURIComponent(query);
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return await res.json();
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error('Overpass onbereikbaar');
+  }
+
   async function fetchNearestWay(lat, lon) {
     const radius = clickRadiusMeters();
     const query = `
@@ -126,10 +175,7 @@
         way(around:${radius},${lat},${lon})["highway"];
       );
       out geom;`;
-    const url = 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query);
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('Overpass-fout: ' + res.status);
-    const json = await res.json();
+    const json = await overpassFetch(query);
     if (!json.elements || json.elements.length === 0) return null;
 
     const nearest = json.elements
